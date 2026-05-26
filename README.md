@@ -8,9 +8,9 @@ The raw Wireshark captures and local CLI logs are intentionally ignored by Git b
 
 These screenshots from the JRING app were used to match BLE packets against visible app values such as steps, calories, mileage, sleep duration, and heart rate.
 
-![JRING home screen with activity and sleep summary](screenshots/jring-home-sleep-summary.png)
-
-![JRING sleep detail screen showing light and deep sleep](screenshots/jring-sleep-detail.png)
+| Home / summary | Sleep detail |
+| --- | --- |
+| <img src="screenshots/jring-home-sleep-summary.png" alt="JRING home screen with activity and sleep summary" width="260"> | <img src="screenshots/jring-sleep-detail.png" alt="JRING sleep detail screen showing light and deep sleep" width="260"> |
 
 ## What Works
 
