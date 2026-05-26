@@ -1,0 +1,11 @@
+# Raw BLE captures and local logs can contain nearby device identifiers.
+*.pcapng
+logs/
+
+# Python/editor noise.
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+
