@@ -4,6 +4,14 @@ Reverse-engineering notes and a small Python CLI for a cheap AliExpress-style BL
 
 The raw Wireshark captures and local CLI logs are intentionally ignored by Git because BLE captures can include device identifiers from phones, computers, and nearby devices. The protocol notes keep the ring address because it is useful for following the analysis, but unrelated central/client identifiers have been redacted.
 
+## Screenshots
+
+These screenshots from the JRING app were used to match BLE packets against visible app values such as steps, calories, mileage, sleep duration, and heart rate.
+
+![JRING home screen with activity and sleep summary](screenshots/jring-home-sleep-summary.png)
+
+![JRING sleep detail screen showing light and deep sleep](screenshots/jring-sleep-detail.png)
+
 ## What Works
 
 - Scan/connect with Python and Bleak.
@@ -31,11 +39,12 @@ The raw Wireshark captures and local CLI logs are intentionally ignored by Git b
 
 ## Files
 
-- `smart_ring_cli.py`: interactive BLE CLI
-- `Protocol.md`: implementer-facing command/response protocol reference
-- `ring-protocol-notes.md`: detailed protocol notes
-- `lab-notes.md`: brief chronological lab log
-- `blog-hacking-cheap-aliexpress-smart-ring.md`: short blog draft
+- [Protocol.md](Protocol.md): implementer-facing protocol reference. Start here if you want the GATT layout, packet shape, command bytes, expected notifications, decoded fields, and uncertainty markers.
+- [ring-protocol-notes.md](ring-protocol-notes.md): longer working notes with capture evidence, packet examples, and how each command was inferred.
+- [lab-notes.md](lab-notes.md): brief chronological lab notebook covering each Wireshark capture and CLI run.
+- [smart_ring_cli.py](smart_ring_cli.py): interactive Python/Bleak CLI used to scan, connect, send commands, subscribe to notifications, and produce verbose logs.
+- [requirements.txt](requirements.txt): Python dependency list.
+- [screenshots/](screenshots): app screenshots used as ground truth while decoding visible values.
 
 ## Run
 
