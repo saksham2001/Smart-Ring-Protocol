@@ -16,25 +16,11 @@ Brief working notes for the BLE reverse engineering runs.
 - `logs/smart-ring-20260526-011251.jsonl`
 - `logs/smart-ring-20260526-014557.log`
 - `logs/smart-ring-20260526-014557.jsonl`
+- `logs/smart-ring-20260528-101317.log`
+- `logs/smart-ring-20260528-101317.jsonl`
 - `smart_ring_cli.py`
+- `Protocol.md`
 - `ring-protocol-notes.md`
-
-## Product Listing
-
-User-provided order listing: `https://www.aliexpress.us/item/3256810466598469.html`
-
-Note: AliExpress sellers often change or reuse listings. The ring under test does not appear to have an OLED/display, so display-ring listings such as some SR08/TK9 pages are only nearby context.
-
-Listed hardware:
-
-- Main chip: Coolchip AB2026
-- Memory: `64KB + 8K cache + 8Mbit flash`
-- Bluetooth: `5.4`
-- Material: `304 stainless steel`
-- Charging: magnetic, about 2 hours
-- Runtime: 3-5 days normal use
-
-Learning: earlier DA14585 notes came from similar JRING/SR08/TK9 listings, not this exact order page. AB2026 is the current seller-listed chip, but the BLE protocol findings are more reliable than the listing hardware text.
 
 ## ring-measure.pcapng
 
@@ -112,7 +98,7 @@ Learning:
 
 - App showed `120 / 10000` steps, `6 / 395` calories, and `0.10 km / 7.5 km` mileage.
 - Matching activity packet: `037901156a780000006900000006000000000000`.
-- `0x03` bytes `1-4` are Unix timestamp.
+- `0x03` bytes `1-4` are timestamp-like. Later CLI runs showed these should be treated as local-like ring time rather than strict UTC.
 - `0x03` bytes `5-8` are steps: `0x78 = 120`.
 - `0x03` bytes `9-12` are distance-like units: `105`, matching about `0.10 km`.
 - `0x03` bytes `13-16` are calories: `6`.
@@ -211,10 +197,10 @@ Learning:
 
 - After `notify on`, the ring sent setup/status packets: `0x20`, `0x0c`, `0xf6`, `0x03`, `0x13`, `0x0b`.
 - Moving the ring produced many `0x03` / `0x13` packet pairs without starting HR or SpO2.
-- `0x03` packets contain a little-endian Unix timestamp in bytes `1-4`.
+- `0x03` packets contain a little-endian timestamp-like value in bytes `1-4`.
 - Changing fields in `0x03` packets look like activity/step/motion counters.
 - `0x13` appears to be a companion or summary packet for activity data.
-- `0x0b63...` may be a percent-like status value; possibly battery/status.
+- `0x0b63...` looked percent-like here; later May 28 testing confirmed `0x0b byte 1` mirrors battery percent.
 - Manual SpO2 final packet: `245770486305...`, byte `4` = `0x63` = `99%`.
 - Manual HR final packet: `145cfc146a56...`, byte `5` = `0x56` = `86 bpm`.
 - Selfie events again appeared as repeated `0602...` packets.
@@ -285,6 +271,65 @@ Learning:
 - After `52...01`, movement produced normal activity packets, rising from `0` to `41` steps and `2` calories. This may simply be step counting from movement, not proof that `0x52` controls air mode.
 - Next HID work should use Wireshark while the phone/JRING app enables air control, or a BLE stack/API that can access HID reports directly.
 
+## smart-ring-20260528-101317 CLI Run
+
+Morning CLI run after the ring had collected a full night of sleep data. The app showed sleep for May 28, 2026:
+
+- Total sleep: `7h15m`
+- Deep sleep: `2h00m`
+- Light sleep: `5h15m`
+- Awake: `0h00m`
+- Time to fall asleep: `1:30 AM`
+- Time to wake up: `8:45 AM`
+
+Result: strongly confirmed the sleep timeline format and improved historical HR/battery understanding.
+
+Learning:
+
+- `sleep` wrote `1000000000000000000000000000000000000000`.
+- The ring returned two `0x10` summary packets followed by `0x11` sleep timeline packets.
+- The timeline started at local-like `1:30 AM` and ended at `8:45 AM`.
+- `29` timeline packets * `15` one-minute samples = `435` minutes = `7h15m`, exactly matching the app.
+- `8` deep packets * `15` samples = `120` minutes = `2h00m`.
+- `21` light packets * `15` samples = `315` minutes = `5h15m`.
+- No awake samples were seen, matching app awake duration `0h00m`.
+- `0x28` remains confirmed as light sleep.
+- `0x63` remains confirmed as deep sleep.
+- Example light packet:
+  - `11989a176a282828282828282828282828282828`
+- Example deep packet:
+  - `1124a5176a636363636363636363636363636363`
+- The ring timestamps are local-wall-clock-like, not true UTC. A packet captured at local `10:14 AM` decoded as `2026-05-28T10:14:00` when interpreted as Unix seconds, so CLI/docs should treat these as `ring_time` or local-like timestamps.
+- Startup `0x0b` packet matched standard BLE battery:
+  - Custom packet: `0b37000000000000000000000000000000000000`
+  - `0x37 = 55`
+  - Standard Battery Service also returned `55%`
+  - `0x0b byte 1` is now confirmed as battery percent or a direct battery-percent mirror.
+- Activity still decoded cleanly:
+  - `039615186a880000007700000007000000f46500`
+  - `136` steps, `119` distance-like units, `7` calories.
+- `history` wrote `100000...` then `160000...`.
+- The `0x16` measurement stream returned `0x16f0`, `0x16aa`, and `0x16a0` packets.
+- `0x16a0` samples now look strongly like stored automatic HR values:
+  - `01:30 -> 73`
+  - `02:00 -> 83`
+  - `02:30 -> 82`
+  - `03:00 -> 82`
+  - `03:30 -> 76`
+  - `04:00 -> 74`
+  - `04:30 -> 77`
+  - `05:00 -> 73`
+  - `05:30 -> 149` suspicious outlier / bad read / unknown flag possibility.
+  - `06:00 -> 77`
+  - `06:30 -> 83`
+  - `07:00 -> 76`
+  - `07:30 -> 73`
+  - `08:00 -> 77`
+  - `08:30 -> 70`
+  - `09:00 -> 77`
+  - `10:02 -> 72`
+- The `0x16` record structure is still partial: values are plausible BPM, but cadence, repeated sample bytes, and outlier handling need more work.
+
 ## External Colmi R02 Research
 
 Reviewed `tahnok/colmi_r02_client` and `colmi.puxtril.com`.
@@ -309,18 +354,11 @@ Learning:
 - Current steps/activity query.
 - Step, calorie, and distance-like activity decode.
 - Sleep timeline query and light/deep sleep decode.
+- Full-night sleep duration/deep/light totals from `0x11` packet counts.
+- Custom `0x0b` battery percent packet.
+- Stored HR-like history stream from `0x16a0` packets.
 - Live HR measurement.
 - Live SpO2 measurement.
 - Find-ring light.
 - Selfie/clench event.
 - Locale command acknowledgement.
-
-## Next Lab Targets
-
-- Test the new CLI `activity`, `time sync`, `sync baseline`, `sleep`, and `history` commands.
-- Do controlled movement tests with known counts: still, 10 steps, 20 steps, shake-only, clench-only.
-- Record physical find-ring light timing for `0401`, `0405`, `040a`, and `0414`.
-- Locate calorie goal `395` and mileage goal `7.5 km` in config packets.
-- Discover historical HR, historical SpO2, awake sleep sample value, and remaining schedule/config commands.
-- Do a focused air-control test while playing music/video and sniff HID report notifications.
-- Decode unknown setup/status packets: `0x20`, `0xf6`, `0x03`, `0x13`, `0x0b`, `0x28`.

@@ -116,11 +116,17 @@ bytes 1-19  payload fields and zero padding
 Multi-byte integer fields observed so far are little-endian:
 
 ```text
-u32 Unix timestamp
+u32 timestamp, often local-like ring time
 u32 steps
 u32 distance-like units
 u32 calories
 ```
+
+Timestamp caveat: the ring stores several timestamps as Unix-shaped integer
+values that behave like local wall-clock time, not strict UTC. For example, a
+packet captured at 10:14 AM local decoded to `2026-05-28T10:14:00` when treated
+as Unix seconds. Treat these as `ring_time` / local-like timestamps unless the
+specific command is known to carry real UTC.
 
 There is no observed Oura-style frame header such as:
 
@@ -247,7 +253,7 @@ Fields:
 
 ```text
 byte 0       0x03
-bytes 1-4    Unix timestamp, u32 little-endian
+bytes 1-4    ring timestamp, u32 little-endian, local-like in recent captures
 bytes 5-8    steps, u32 little-endian
 bytes 9-12   distance-like units, u32 little-endian
 bytes 13-16  calories, u32 little-endian
@@ -266,7 +272,7 @@ Example:
 Decoded:
 
 ```text
-timestamp:      2026-05-26
+ring time:      2026-05-26 local-like timestamp
 steps:          328
 distance units: 287
 calories:       18
@@ -286,7 +292,7 @@ Known/likely fields:
 
 ```text
 byte 0       0x13
-bytes 1-4    Unix timestamp, u32 little-endian
+bytes 1-4    ring timestamp, u32 little-endian, local-like
 bytes 5-8    unknown field A
 bytes 9-12   unknown field B
 bytes 13-16  step-like summary field
@@ -325,7 +331,7 @@ same 20-byte payload echoed back
 
 Status: `CONFIRMED`
 
-Use the standard BLE Battery Service, not the custom app protocol.
+The ring exposes battery through the standard BLE Battery Service:
 
 ```text
 Service: 0000180f-0000-1000-8000-00805f9b34fb
@@ -338,6 +344,28 @@ Example:
 ```text
 0x64 = 100%
 ```
+
+The custom app protocol also emits a battery-like status packet:
+
+```text
+0b PP 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+Fields:
+
+```text
+byte 0       0x0b
+byte 1       battery percent
+bytes 2-19   zero padding / unknown
+```
+
+Evidence:
+
+```text
+0b37000000000000000000000000000000000000  -> 0x37 = 55%
+```
+
+In the same session, the standard Battery Service also returned `55%`.
 
 ### Live Heart Rate Start
 
@@ -517,7 +545,7 @@ Fields:
 
 ```text
 byte 0       0x11
-bytes 1-4    Unix timestamp, u32 little-endian
+bytes 1-4    ring timestamp, u32 little-endian, local-like
 bytes 5-19   15 sleep-stage samples, one minute each
 ```
 
@@ -535,6 +563,27 @@ Morning capture matched the app:
 20 packets * 15 samples = 300 minutes = 5h00m
 18 light blocks = 270 minutes = 4h30m
 2 deep blocks = 30 minutes = 0h30m
+```
+
+The May 28 CLI run matched a fuller app sleep report exactly:
+
+```text
+App:  1:30 AM -> 8:45 AM, total 7h15m
+Deep: 2h00m
+Light: 5h15m
+Awake: 0h00m
+
+BLE:   29 timeline packets * 15 samples = 435 minutes = 7h15m
+Deep:  8 packets * 15 samples = 120 minutes = 2h00m
+Light: 21 packets * 15 samples = 315 minutes = 5h15m
+Awake: no awake samples observed
+```
+
+Examples:
+
+```text
+11989a176a282828282828282828282828282828  -> 1:30, 15 min light
+1124a5176a636363636363636363636363636363  -> 2:15, 15 min deep
 ```
 
 Awake duration was `0h00m` in the app, so the awake sample value is still not
@@ -563,11 +612,34 @@ Known parsing:
 
 ```text
 0x16 0xaa     metadata-like record
-0x16 0xa0     sample chunk, contains historical HR-like values
+0x16 0xa0     sample chunk, contains historical HR values or HR-like values
 ```
 
-Historical sample chunks have contained values matching app HR history, but the
-full record structure is not fully decoded.
+The May 28 run returned `0x16a0` values at 30-minute-ish intervals that look
+like stored automatic HR samples:
+
+```text
+01:30 -> 73
+02:00 -> 83
+02:30 -> 82
+03:00 -> 82
+03:30 -> 76
+04:00 -> 74
+04:30 -> 77
+05:00 -> 73
+05:30 -> 149  outlier / bad read / unknown flag possibility
+06:00 -> 77
+06:30 -> 83
+07:00 -> 76
+07:30 -> 73
+08:00 -> 77
+08:30 -> 70
+09:00 -> 77
+10:02 -> 72
+```
+
+Most values are plausible BPM. The exact sample cadence, meaning of repeated
+bytes, and handling of outliers such as `149` still need decoding.
 
 ### Selfie Mode
 
@@ -749,9 +821,9 @@ The changed byte may be an air-control flag. This is not confirmed.
 
 ## Unknown / Partially Decoded Notifications
 
-### `0x0b` Percent-Like Status
+### `0x0b` Battery-Like Status
 
-Status: `UNKNOWN`
+Status: `CONFIRMED`
 
 Example:
 
@@ -762,12 +834,13 @@ Example:
 Byte `1` is percent-like:
 
 ```text
-0x63 = 99
+0x63 = 99%
 ```
 
-This may be battery, health/status, or another percentage-like field. It is not
-confirmed. Standard Battery Service should be preferred for actual battery
-percentage.
+This is now confirmed as battery percent or a direct mirror of battery percent
+because `0b37...` matched the standard Battery Service value `55%` in the May
+28 CLI run. The standard Battery Service remains the most portable way to read
+battery, but `0x0b` is useful when parsing startup notifications.
 
 ### `0x20` Device Time / Config
 
@@ -853,7 +926,7 @@ Short SpO2 runs may not produce a final `0x24` result packet.
 - Calorie calculation versus app display goals.
 - Awake sleep sample value.
 - Full historical HR/SpO2 record format in `0x16` streams.
-- Meaning of `0x0b`, `0x20`, `0x44`, `0x48`, and `0xf6`.
+- Exact meaning of `0x20`, `0x44`, `0x48`, and `0xf6`.
 - Whether `0x52` and the `0x1b` variant fully control air/HID mode.
 - Whether HID can be accessed outside the official app on macOS, or requires
   another BLE stack / OS HID API.
